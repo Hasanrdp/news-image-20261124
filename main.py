@@ -1,150 +1,199 @@
 #!/usr/bin/env python3
-"""The World Today - Tuesday 24 November 2026, in one image.
+"""The World Today - front page for Tuesday 24 November 2026 (v2).
 
-A pure-stdlib (Python 3.13, no third-party packages) program that draws a
-one-page newspaper front page summarising the world news of Tuesday
-24 November 2026 and writes it to /output/entry.png (or $MAKEFUN_OUTPUT_DIR).
-
-The day's news, as reported on 23-24 November 2026:
-  * LEAD - NATO sends an AWACS early-warning aircraft to Poland after three
-    Russian Kh-101 cruise missiles landed in Poland on Friday 20 November;
-    the North Atlantic Council decided it in Brussels on Monday 23 November.
-  * World chess champion D Gukesh opens his title defence against
-    Javokhir Sindarov in Geneva on 24 November.
-  * Ukraine sinks a Russian warship in a Libyan port with maritime drones,
-    as the war spreads beyond Europe; a Russian cargo ship is hit in the
-    Gulf of Finland.
-  * At least 24 people die in a fire at a candy factory in Indonesia, with
-    around 30 still missing.
-  * COP31 climate talks in Turkey collapse without a deal on fossil fuels.
-  * South Korea briefly warns Ulleung island after a Russian aircraft
-    enters its airspace.
-  * Israeli strikes kill three in Gaza, including a UN agency worker.
-  * Mexico captures drug lord Fausto Isidro Meza Flores, "Chapo Isidro".
-  * Carlos Alcaraz wins his first ATP Finals title, beating Zverev.
-
-The drawing is fully deterministic: fixed colours, fixed geometry and a
-seeded star field, so two runs write byte-identical PNGs.
-
-Layout (1024 x 1024): navy masthead with a globe mark, a hero panel with a
-drawn AWACS over a stylised map of Poland, the lead headline, three
-secondary stories with small drawn icons, a ticker of further headlines
-and a footer naming the day.
+Pure-stdlib, deterministic: renders a 1024x1024 newspaper front page with
+36 dated stories across 10 regions, drawn scenes (market chart, rocket,
+globe, seismograph, football), a markets ticker and a date-check footer.
+Every story below was reported on 24 November 2026 by Reuters, AP, BBC,
+UN News, Xinhua, Nature or national broadcasters; unconfirmed claims are
+labelled as claims. Running this file twice produces byte-identical PNGs.
 """
 
-import binascii
 import os
 import struct
 import zlib
 
 W, H = 1024, 1024
+OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "entry.png")
 
 # ---------------------------------------------------------------- palette
-PAPER = (246, 241, 227)   # warm newsprint
-INK = (16, 24, 34)        # near-black for headlines
-GREY = (74, 82, 92)       # body grey
-NAVY = (14, 38, 63)       # masthead / hero sky base
-NAVY_DEEP = (9, 26, 46)   # hero sky top
-NAVY_MID = (20, 54, 90)   # hero sky bottom
-SKY_LINE = (46, 90, 136)  # radar rings
-AMBER = (232, 163, 23)    # accent
-RED = (178, 39, 30)       # alert red
-WHITE = (244, 246, 248)
-PLANE = (199, 208, 219)   # AWACS fuselage
-PLANE_DARK = (124, 138, 153)
-DOME = (232, 237, 242)
-LAND = (23, 63, 46)       # map land
-POLAND = (46, 107, 79)    # Poland fill
-SEA = (16, 44, 66)        # Baltic strip
-CREAM = (233, 224, 196)   # ticker divider dots
+INK = (18, 18, 18)
+PAPER = (252, 250, 244)
+RED = (178, 34, 34)
+BLUE = (28, 58, 112)
+GRAY = (110, 108, 100)
+LIGHT = (214, 210, 198)
+GREEN = (28, 110, 60)
 
-# ------------------------------------------------------- 5x7 bitmap font
-# Each glyph is 7 rows of 5 cells; '#' is on, '.' is off.  All copy in the
-# image is set in capitals, so the font covers A-Z, 0-9 and punctuation.
-FONT = {
-    "A": ("..#..", ".#.#.", "#...#", "#...#", "#####", "#...#", "#...#"),
-    "B": ("####.", "#...#", "#...#", "####.", "#...#", "#...#", "####."),
-    "C": (".####", "#....", "#....", "#....", "#....", "#...#", ".###."),
-    "D": ("####.", "#...#", "#...#", "#...#", "#...#", "#...#", "####."),
-    "E": ("#####", "#....", "#....", "####.", "#....", "#....", "#####"),
-    "F": ("#####", "#....", "#....", "####.", "#....", "#....", "#...."),
-    "G": (".####", "#....", "#....", "#.###", "#...#", "#...#", ".###."),
-    "H": ("#...#", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"),
-    "I": (".###.", "..#..", "..#..", "..#..", "..#..", "..#..", ".###."),
-    "J": ("..###", "...#.", "...#.", "...#.", "...#.", "#..#.", ".##.."),
-    "K": ("#...#", "#..#.", "#.#..", "##...", "#.#..", "#..#.", "#...#"),
-    "L": ("#....", "#....", "#....", "#....", "#....", "#....", "#####"),
-    "M": ("#...#", "##.##", "#.#.#", "#.#.#", "#...#", "#...#", "#...#"),
-    "N": ("#...#", "##..#", "#.#.#", "#..##", "#...#", "#...#", "#...#"),
-    "O": (".###.", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."),
-    "P": ("####.", "#...#", "#...#", "####.", "#....", "#....", "#...."),
-    "Q": (".###.", "#...#", "#...#", "#...#", "#.#.#", "#..#.", ".##.#"),
-    "R": ("####.", "#...#", "#...#", "####.", "#.#..", "#..#.", "#...#"),
-    "S": (".####", "#....", "#....", ".###.", "....#", "....#", "####."),
-    "T": ("#####", "..#..", "..#..", "..#..", "..#..", "..#..", "..#.."),
-    "U": ("#...#", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."),
-    "V": ("#...#", "#...#", "#...#", "#...#", "#...#", ".#.#.", "..#.."),
-    "W": ("#...#", "#...#", "#...#", "#.#.#", "#.#.#", "##.##", "#...#"),
-    "X": ("#...#", "#...#", ".#.#.", "..#..", ".#.#.", "#...#", "#...#"),
-    "Y": ("#...#", "#...#", ".#.#.", "..#..", "..#..", "..#..", "..#.."),
-    "Z": ("#####", "....#", "...#.", "..#..", ".#...", "#....", "#####"),
-    "0": (".###.", "#...#", "#..##", "#.#.#", "##..#", "#...#", ".###."),
-    "1": ("..#..", ".##..", "..#..", "..#..", "..#..", "..#..", ".###."),
-    "2": (".###.", "#...#", "....#", "..##.", ".#...", "#....", "#####"),
-    "3": ("#####", "...#.", "..#..", "...#.", "....#", "#...#", ".###."),
-    "4": ("...#.", "..##.", ".#.#.", "#..#.", "#####", "...#.", "...#."),
-    "5": ("#####", "#....", "####.", "....#", "....#", "#...#", ".###."),
-    "6": ("..##.", ".#...", "#....", "####.", "#...#", "#...#", ".###."),
-    "7": ("#####", "....#", "...#.", "..#..", ".#...", ".#...", ".#..."),
-    "8": (".###.", "#...#", "#...#", ".###.", "#...#", "#...#", ".###."),
-    "9": (".###.", "#...#", "#...#", ".####", "....#", "...#.", ".##.."),
-    " ": (".....", ".....", ".....", ".....", ".....", ".....", "....."),
-    ".": (".....", ".....", ".....", ".....", ".....", ".##..", ".##.."),
-    ",": (".....", ".....", ".....", ".....", ".##..", "..#..", ".#..."),
-    ":": (".....", ".##..", ".##..", ".....", ".##..", ".##..", "....."),
-    ";": (".....", ".##..", ".##..", ".....", ".##..", "..#..", ".#..."),
-    "!": ("..#..", "..#..", "..#..", "..#..", "..#..", ".....", "..#.."),
-    "?": (".###.", "#...#", "....#", "...#.", "..#..", ".....", "..#.."),
-    "-": (".....", ".....", ".....", ".###.", ".....", ".....", "....."),
-    "'": ("..#..", "..#..", ".#...", ".....", ".....", ".....", "....."),
-    '"': (".#.#.", ".#.#.", ".....", ".....", ".....", ".....", "....."),
-    "(": ("...#.", "..#..", ".#...", ".#...", ".#...", "..#..", "...#."),
-    ")": (".#...", "..#..", "...#.", "...#.", "...#.", "..#..", ".#..."),
-    "/": ("....#", "...#.", "...#.", "..#..", ".#...", ".#...", "#...."),
-    "&": (".##..", "#..#.", "#.#..", ".#...", "#.#.#", "#..#.", ".##.#"),
-    "%": ("##..#", "##.#.", "....#", "...#.", "..#..", "#.#.#", "#..##"),
-    "+": (".....", "..#..", "..#..", ".####", "..#..", "..#..", "....."),
-    "=": (".....", ".....", "#####", ".....", "#####", ".....", "....."),
-    "$": ("..#..", ".####", "#.#..", ".###.", "..#.#", "####.", "..#.."),
-    "#": (".#.#.", ".#.#.", "#####", ".#.#.", "#####", ".#.#.", ".#.#."),
-    "*": (".....", "#.#.#", ".###.", "#####", ".###.", "#.#.#", "....."),
-    "[": (".###.", ".#...", ".#...", ".#...", ".#...", ".#...", ".###."),
-    "]": (".###.", "...#.", "...#.", "...#.", "...#.", "...#.", ".###."),
-    "_": (".....", ".....", ".....", ".....", ".....", ".....", "#####"),
-    # Bullet and em dash map onto small drawn shapes.
-    "•": (".....", ".....", ".##..", ".##..", ".....", ".....", "....."),
-    "—": (".....", ".....", ".....", "#####", ".....", ".....", "....."),
+# ---------------------------------------------------------------- 5x7 font
+# Each glyph: 7 rows of 5 chars, '#' = on. Uppercase + digits + punctuation.
+_RAW = {
+    "A": ".###./#...#/#...#/#####/#...#/#...#/#...#",
+    "B": "####./#...#/#...#/####./#...#/#...#/####.",
+    "C": ".####/#..../#..../#..../#..../#..../.####",
+    "D": "###../#..#./#...#/#...#/#...#/#..#./###..",
+    "E": "#####/#..../#..../####./#..../#..../#####",
+    "F": "#####/#..../#..../####./#..../#..../#....",
+    "G": ".####/#..../#..../#..##/#...#/#...#/.###.",
+    "H": "#...#/#...#/#...#/#####/#...#/#...#/#...#",
+    "I": ".###./..#../..#../..#../..#../..#../.###.",
+    "J": "..###/...#./...#./...#./...#./#..#./.##..",
+    "K": "#...#/#..#./#.#../##.../#.#../#..#./#...#",
+    "L": "#..../#..../#..../#..../#..../#..../#####",
+    "M": "#...#/##.##/#.#.#/#.#.#/#...#/#...#/#...#",
+    "N": "#...#/##..#/#.#.#/#..##/#...#/#...#/#...#",
+    "O": ".###./#...#/#...#/#...#/#...#/#...#/.###.",
+    "P": "####./#...#/#...#/####./#..../#..../#....",
+    "Q": ".###./#...#/#...#/#...#/#.#.#/#..#./.##.#",
+    "R": "####./#...#/#...#/####./#.#../#..#./#...#",
+    "S": ".####/#..../#..../.###./....#/....#/####.",
+    "T": "#####/..#../..#../..#../..#../..#../..#..",
+    "U": "#...#/#...#/#...#/#...#/#...#/#...#/.###.",
+    "V": "#...#/#...#/#...#/#...#/#...#/.#.#./..#..",
+    "W": "#...#/#...#/#...#/#.#.#/#.#.#/##.##/#...#",
+    "X": "#...#/#...#/.#.#./..#../.#.#./#...#/#...#",
+    "Y": "#...#/#...#/.#.#./..#../..#../..#../..#..",
+    "Z": "#####/....#/...#./..#../.#.../#..../#####",
+    "0": ".###./#..##/#.#.#/##..#/#...#/#...#/.###.",
+    "1": "..#../.##../..#../..#../..#../..#../.###.",
+    "2": ".###./#...#/....#/...#./..#../.#.../#####",
+    "3": "####./....#/....#/.###./....#/....#/####.",
+    "4": "...#./..##./.#.#./#..#./#####/...#./...#.",
+    "5": "#####/#..../####./....#/....#/#...#/.###.",
+    "6": ".###./#..../#..../####./#...#/#...#/.###.",
+    "7": "#####/....#/...#./...#./..#../..#../..#..",
+    "8": ".###./#...#/#...#/.###./#...#/#...#/.###.",
+    "9": ".###./#...#/#...#/.####/....#/....#/.###.",
+    " ": "...../...../...../...../...../...../.....",
+    ".": "...../...../...../...../...../.##../.##..",
+    ",": "...../...../...../...../.##../.##../.#...",
+    ":": "...../.##../.##../...../.##../.##../.....",
+    ";": "...../.##../.##../...../.##../.##../.#...",
+    "'": "..#../..#../.#.../...../...../...../.....",
+    "-": "...../...../...../#####/...../...../.....",
+    "/": "....#/....#/...#./..#../.#.../#..../#....",
+    "(": "...##/..#../.#.../.#.../.#.../..#../...##",
+    ")": "##.../..#../...#./...#./...#./..#../##...",
+    "%": "##..#/##.#./...#./..#../.#.../#..##/#..##",
+    "+": "...../..#../..#../#####/..#../..#../.....",
+    "&": ".###./#...#/#...#/.#.#./#..#./#..#./.##.#",
+    "!": "..#../..#../..#../..#../..#../...../..#..",
+    "?": ".###./#...#/....#/...#./..#../...../..#..",
+    '"': ".#.#./.#.#./.#.#./...../...../...../.....",
+    "$": "..#../.####/#.#.#/.###./..#.#/####./..#..",
+    "*": "...../#...#/.###./#####/.###./#...#/.....",
+    "=": "...../...../#####/...../#####/...../.....",
+    "<": "....#/...#./..#../.#.../..#../...#./....#",
+    ">": "#..../.#.../..#../...#./..#../.#.../#....",
+    "·": "...../...../.##../.##../...../...../.....",
+    "•": "...../.###./.###./.###./...../...../.....",
 }
-# Normalise lookalikes to the glyphs above.
-ALIASES = {"’": "'", "‘": "'", "“": '"', "”": '"', "–": "-", "·": "•"}
+_ALIAS = {"’": "'", "‘": "'", "“": '"', "”": '"', "–": "-", "—": "-"}
+FONT = {}
+for _ch, _rows in _RAW.items():
+    FONT[_ch] = _rows.split("/")
+
+# ---------------------------------------------------------------- canvas
+buf = bytearray(W * H * 3)
+for _i in range(W * H):
+    buf[_i * 3:_i * 3 + 3] = bytes(PAPER)
 
 
-def glyph(ch):
-    return FONT.get(ALIASES.get(ch, ch), FONT[" "])
+def set_px(x, y, c):
+    if 0 <= x < W and 0 <= y < H:
+        _o = (y * W + x) * 3
+        buf[_o:_o + 3] = bytes(c)
 
 
-def text_width(s, scale):
-    return sum(6 for _ in s) * scale - scale
+def fill_rect(x, y, w, h, c):
+    for _yy in range(y, y + h):
+        for _xx in range(x, x + w):
+            set_px(_xx, _yy, c)
 
 
-def wrap_text(s, max_chars):
-    """Greedy word wrap; returns a list of lines, each <= max_chars."""
-    words = s.split(" ")
+def hline(x, y, w, c, t=1):
+    fill_rect(x, y, w, t, c)
+
+
+def vline(x, y, h, c, t=1):
+    fill_rect(x, y, t, h, c)
+
+
+def rect(x, y, w, h, c, t=1):
+    hline(x, y, w, c, t)
+    hline(x, y + h - t, w, c, t)
+    vline(x, y, h, c, t)
+    vline(x + w - t, y, h, c, t)
+
+
+def line(x0, y0, x1, y1, c):
+    _dx, _dy = abs(x1 - x0), abs(y1 - y0)
+    _sx = 1 if x0 < x1 else -1
+    _sy = 1 if y0 < y1 else -1
+    _err = _dx - _dy
+    while True:
+        set_px(x0, y0, c)
+        if x0 == x1 and y0 == y1:
+            break
+        _e2 = 2 * _err
+        if _e2 > -_dy:
+            _err -= _dy
+            x0 += _sx
+        if _e2 < _dx:
+            _err += _dx
+            y0 += _sy
+
+
+def circle(cx, cy, r, c):
+    _x, _y, _d = 0, r, 3 - 2 * r
+    while _x <= _y:
+        for _px, _py in ((_x, _y), (_y, _x), (-_x, _y), (-_y, _x),
+                         (_x, -_y), (_y, -_x), (-_x, -_y), (-_y, -_x)):
+            set_px(cx + _px, cy + _py, c)
+        if _d < 0:
+            _d += 4 * _x + 6
+        else:
+            _d += 4 * (_x - _y) + 10
+            _y -= 1
+        _x += 1
+
+
+def disc(cx, cy, r, c):
+    for _yy in range(cy - r, cy + r + 1):
+        for _xx in range(cx - r, cx + r + 1):
+            if (_xx - cx) ** 2 + (_yy - cy) ** 2 <= r * r:
+                set_px(_xx, _yy, c)
+
+
+def text(s, x, y, scale=1, c=INK):
+    s = "".join(_ALIAS.get(_ch, _ch) for _ch in s.upper())
+    _cx = x
+    for _ch in s:
+        _g = FONT.get(_ch, FONT[" "])
+        for _r in range(7):
+            _row = _g[_r]
+            for _col in range(5):
+                if _row[_col] == "#":
+                    fill_rect(_cx + _col * scale, y + _r * scale,
+                              scale, scale, c)
+        _cx += 6 * scale
+    return _cx - x
+
+
+def text_w(s, scale=1):
+    return len(s) * 6 * scale - scale
+
+
+def centre(s, y, scale=1, c=INK):
+    text(s, (W - text_w(s, scale)) // 2, y, scale, c)
+
+
+def wrap(s, max_chars):
+    words = s.split()
     lines, cur = [], ""
     for w in words:
-        trial = (cur + " " + w).strip()
-        if len(trial) <= max_chars:
-            cur = trial
+        if len(cur) + len(w) + (1 if cur else 0) <= max_chars:
+            cur = cur + " " + w if cur else w
         else:
             if cur:
                 lines.append(cur)
@@ -154,393 +203,307 @@ def wrap_text(s, max_chars):
     return lines
 
 
-# ------------------------------------------------------------- canvas
-class Canvas:
-    """An RGB frame buffer with small drawing primitives."""
+# ---------------------------------------------------------------- stories
+# (region, place, headline, summary) - all reported 24 Nov 2026.
+STORIES = [
+    ("NORTH AMERICA", "USA",
+     "NVIDIA +31.5% AS BOARD REINSTATES HUANG AS CEO",
+     "Shares add about $1tn in value; Trump says he pressed the board."),
+    ("NORTH AMERICA", "USA",
+     "TRUMP SAYS HE PRESSED NVIDIA BOARD TO BRING HUANG BACK",
+     "President claims credit for the CEO return after 11 days out."),
+    ("NORTH AMERICA", "USA",
+     "PENNSYLVANIA MEASLES DEATH TOLL REACHES NINE",
+     "Outbreak spans 46 counties; US has lost its measles elimination status."),
+    ("NORTH AMERICA", "USA",
+     "DOJ RECOVERS $8BN IN LARGEST ANTI-SCAM SWEEP",
+     "More than 800 suspects charged in a nationwide fraud crackdown."),
+    ("LATIN AMERICA", "MEXICO",
+     "MEXICO TO TRY 'EL CHAPO ISIDRO' DESPITE US EXTRADITION BID",
+     "Cartel figure to face Mexican courts first, officials say."),
+    ("LATIN AMERICA", "COLOMBIA",
+     "CAR BOMB BLAST ROCKS VILLAVICENCIO, COLOMBIA",
+     "Buildings destroyed; no confirmed victims, the president says."),
+    ("LATIN AMERICA", "VENEZUELA",
+     "VENEZUELA PUTS PUBLIC DEBT AT $237.5BN",
+     "Figure published as Caracas moves toward restructuring."),
+    ("WESTERN EUROPE", "UK",
+     "UK PIP REVIEW CALLS FOR OVERHAUL, NO CUTS PLANNED",
+     "Timms review shakes up disability benefits; thousands fear losses."),
+    ("WESTERN EUROPE", "UK",
+     "TWO HELD OVER SUSPECTED BURGLARY AT ANMER HALL",
+     "Prince William's Norfolk home was unoccupied; no charges yet."),
+    ("WESTERN EUROPE", "FRANCE",
+     "MACRON WANTS STRATEGIC RARE-EARTH RESERVES FOR FRANCE",
+     "President pushes stockpiles as supply tensions grow."),
+    ("WESTERN EUROPE", "EU",
+     "HERNANDEZ DE COS TIPPED TO SUCCEED LAGARDE AT ECB",
+     "Spanish central banker seen as frontrunner for the top job."),
+    ("EASTERN EUROPE", "UKRAINE",
+     "RUSSIAN STRIKE ON ZAPORIZHZHIA KILLS 2, WOUNDS 40",
+     "Five-storey block collapses; an infant is among the injured."),
+    ("EASTERN EUROPE", "UKRAINE",
+     "UKRAINE SAYS IT SANK RUSSIAN CORVETTE OFF BENGHAZI",
+     "Kyiv calls the Libya sea-drone strike an asymmetric operation."),
+    ("EASTERN EUROPE", "UK",
+     "BRITAIN WARNS FIRMS OF RUSSIAN SABOTAGE THREAT",
+     "Defence ministry and MI5 issue a rare public alert."),
+    ("EASTERN EUROPE", "UKRAINE",
+     "ZELENSKY: UKRAINE NEEDS $125BN FOR 2027",
+     "President sets out next year's funding gap."),
+    ("MIDDLE EAST", "SAUDI ARABIA",
+     "HOUTHI DRONE HITS RIYADH'S PIF TOWER, 11 INJURED",
+     "Second strike on the capital's tallest tower in under a week."),
+    ("MIDDLE EAST", "IRAN",
+     "IRAN SAYS THREE TANKERS HIT MINES IN HORMUZ (CLAIM)",
+     "IRGC claim unconfirmed; Tehran sets seven conditions for talks."),
+    ("MIDDLE EAST", "GAZA",
+     "ISRAELI STRIKES KILL 7 IN GAZA DESPITE CEASEFIRE",
+     "Meningitis cases surge to 272, eight times the normal rate."),
+    ("MIDDLE EAST", "GAZA",
+     "OXFAM CALLS GAZA A 'TOXIC LAND'",
+     "Aid group warns of contamination across the territory."),
+    ("MIDDLE EAST", "QATAR",
+     "QATAR URGES IRAN AND US TO SHOW RESTRAINT",
+     "Doha presses both sides as Gulf tensions rise."),
+    ("AFRICA", "SENEGAL",
+     "SENEGAL REINSTATED AS AFRICA CUP CHAMPIONS",
+     "CAS overturns the ruling that had handed the title to Morocco."),
+    ("AFRICA", "NIGERIA",
+     "BORNO SCHOOL ENROLMENT NEARLY DOUBLES",
+     "Nigerian state reports gains despite years of conflict."),
+    ("AFRICA", "DR CONGO",
+     "DR CONGO EBOLA OUTBREAK PASSES 11,700 CASES",
+     "Health officials count 5,775 deaths in the ongoing outbreak."),
+    ("SOUTH ASIA", "NEPAL",
+     "5.6 QUAKE STRIKES NEPAL NEAR CHINA BORDER",
+     "Tremor hits Koshi province; India pledges $1.6bn flood aid."),
+    ("SOUTH ASIA", "BANGLADESH",
+     "HASINA PLANS RETURN ON 16 DECEMBER",
+     "Exiled ex-PM sets a homecoming date despite a death sentence."),
+    ("SOUTH ASIA", "BANGLADESH",
+     "BANGLADESH GARMENT WORKERS PROTEST OVER PAY",
+     "Wage rallies spread as factories face unrest."),
+    ("SOUTH ASIA", "INDIA",
+     "TAMIL NADU SIGNS 70 DEALS WORTH $5.3BN",
+     "Indian state unveils an investment haul at a summit."),
+    ("EAST ASIA", "CHINA",
+     "CHINA NAMES FIRST FOREIGN TIANGONG ASTRONAUT",
+     "Pakistani pilot Zeeshan Ali to fly on Shenzhou-24, launching 25 Nov."),
+    ("EAST ASIA", "ASIA",
+     "SEOUL AND TOKYO STOCKS SURGE ON HUANG RETURN",
+     "Kospi rebounds over 6%; Nikkei climbs 3.91%."),
+    ("EAST ASIA", "CHINA",
+     "HUAWEI GUILTY OF STEALING US TRADE SECRETS",
+     "New York jury convicts the firm; the racketeering charge fails."),
+    ("EAST ASIA", "TAIWAN",
+     "TAIWAN INDEX RECLAIMS 40,000",
+     "TAiEX rallies 2.16% despite six days of foreign selling."),
+    ("SOUTHEAST ASIA & OCEANIA", "INDONESIA",
+     "CANDY FACTORY FIRE IN BANTEN KILLS AT LEAST 24",
+     "About 30 workers still missing after the blaze in Indonesia."),
+    ("SOUTHEAST ASIA & OCEANIA", "VIETNAM",
+     "HANOI RESTAURANT BLAST KILLS SIX",
+     "Gas explosion during renovation injures ten in Vietnam."),
+    ("SOUTHEAST ASIA & OCEANIA", "MALAYSIA",
+     "MALAYSIA TO SEND 6,500 ROHINGYA BACK",
+     "Refugees to be returned to Myanmar from December."),
+    ("GLOBAL", "CLIMATE",
+     "COP31 ENDS WITH NO DEAL ON FOSSIL FUELS",
+     "EU and UK reject the text; first summit without a deal since 2009."),
+    ("GLOBAL", "UN",
+     "GUTERRES WANTS AI RULES FRAMEWORK WITHIN A YEAR",
+     "UN chief calls for a multilateral pact to limit AI risks."),
+]
 
-    def __init__(self, w, h, bg):
-        self.w, self.h = w, h
-        self.px = bytearray(w * h * 3)
-        self.fill_rect(0, 0, w, h, bg)
+REGIONS = []
+for _r, _p, _h, _s in STORIES:
+    if _r not in REGIONS:
+        REGIONS.append(_r)
 
-    def _idx(self, x, y):
-        return (y * self.w + x) * 3
-
-    def set(self, x, y, c):
-        if 0 <= x < self.w and 0 <= y < self.h:
-            i = self._idx(x, y)
-            self.px[i], self.px[i + 1], self.px[i + 2] = c
-
-    def fill_rect(self, x, y, w, h, c):
-        x0, y0 = max(0, x), max(0, y)
-        x1, y1 = min(self.w, x + w), min(self.h, y + h)
-        r, g, b = c
-        for yy in range(y0, y1):
-            base = (yy * self.w + x0) * 3
-            for xx in range(x0, x1):
-                i = base + (xx - x0) * 3
-                self.px[i], self.px[i + 1], self.px[i + 2] = r, g, b
-
-    def hline(self, x0, x1, y, c):
-        if x0 > x1:
-            x0, x1 = x1, x0
-        self.fill_rect(x0, y, x1 - x0 + 1, 1, c)
-
-    def vline(self, x, y0, y1, c):
-        if y0 > y1:
-            y0, y1 = y1, y0
-        self.fill_rect(x, y0, 1, y1 - y0 + 1, c)
-
-    def line(self, x0, y0, x1, y1, c):
-        """Bresenham line, endpoints inclusive."""
-        dx, dy = abs(x1 - x0), -abs(y1 - y0)
-        sx = 1 if x0 < x1 else -1
-        sy = 1 if y0 < y1 else -1
-        err = dx + dy
-        while True:
-            self.set(x0, y0, c)
-            if x0 == x1 and y0 == y1:
-                return
-            e2 = 2 * err
-            if e2 >= dy:
-                err += dy
-                x0 += sx
-            if e2 <= dx:
-                err += dx
-                y0 += sy
-
-    def dashed_line(self, x0, y0, x1, y1, c, dash=9, gap=6):
-        """A dashed straight line (used for the AWACS patrol path)."""
-        import math
-        length = math.hypot(x1 - x0, y1 - y0)
-        if length == 0:
-            return
-        steps = int(length)
-        on = True
-        run = 0
-        for i in range(steps + 1):
-            t = i / max(1, steps)
-            x = round(x0 + (x1 - x0) * t)
-            y = round(y0 + (y1 - y0) * t)
-            if on:
-                self.set(x, y, c)
-            run += 1
-            if run >= (dash if on else gap):
-                on = not on
-                run = 0
-
-    def circle(self, cx, cy, r, c, fill=False):
-        """Midpoint circle; outline, or filled via horizontal spans."""
-        if r <= 0:
-            return
-        if fill:
-            for yy in range(-r, r + 1):
-                half = int((r * r - yy * yy) ** 0.5)
-                self.hline(cx - half, cx + half, cy + yy, c)
-            return
-        x, y, d = 0, r, 3 - 2 * r
-        while x <= y:
-            for px, py in ((x, y), (y, x), (-x, y), (-y, x),
-                           (x, -y), (y, -x), (-x, -y), (-y, -x)):
-                self.set(cx + px, cy + py, c)
-            if d < 0:
-                d += 4 * x + 6
-            else:
-                d += 4 * (x - y) + 10
-                y -= 1
-            x += 1
-
-    def ellipse(self, cx, cy, rx, ry, c, fill=False):
-        """Axis-aligned ellipse, outline or filled."""
-        if rx <= 0 or ry <= 0:
-            return
-        if fill:
-            for yy in range(-ry, ry + 1):
-                half = int(rx * (1 - (yy / ry) ** 2) ** 0.5)
-                self.hline(cx - half, cx + half, cy + yy, c)
-            return
-        for deg in range(0, 360):
-            import math
-            a = math.radians(deg)
-            self.set(round(cx + rx * math.cos(a)),
-                     round(cy + ry * math.sin(a)), c)
-
-    def polygon(self, pts, c):
-        """Filled polygon via the even-odd scanline rule."""
-        if len(pts) < 3:
-            return
-        ys = [p[1] for p in pts]
-        for y in range(min(ys), max(ys) + 1):
-            xs = []
-            n = len(pts)
-            for i in range(n):
-                x0, y0 = pts[i]
-                x1, y1 = pts[(i + 1) % n]
-                if (y0 <= y < y1) or (y1 <= y < y0):
-                    xs.append(x0 + (y - y0) * (x1 - x0) / (y1 - y0))
-            xs.sort()
-            for j in range(0, len(xs) - 1, 2):
-                self.hline(int(xs[j]), int(xs[j + 1]), y, c)
-
-    def polyline(self, pts, c):
-        for i in range(len(pts) - 1):
-            self.line(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1], c)
-
-    # ------------------------------------------------------------ text
-    def draw_text(self, x, y, s, scale, c, align="left"):
-        """Draw a line with the 5x7 font; returns the drawn width."""
-        w = text_width(s, scale)
-        if align == "center":
-            x -= w // 2
-        elif align == "right":
-            x -= w
-        cx = x
-        for ch in s:
-            rows = glyph(ch)
-            for ry, row in enumerate(rows):
-                for rx, bit in enumerate(row):
-                    if bit == "#":
-                        self.fill_rect(cx + rx * scale, y + ry * scale,
-                                       scale, scale, c)
-            cx += 6 * scale
-        return w
-
-    def draw_text_block(self, x, y, lines, scale, c, align="left",
-                        leading=4):
-        """Draw several centred/left lines; returns the next y."""
-        for ln in lines:
-            self.draw_text(x, y, ln, scale, c, align)
-            y += 7 * scale + leading
-        return y
+# ---------------------------------------------------------------- masthead
+def draw_globe(cx, cy, r):
+    # Drawn scene 1: globe at the masthead.
+    circle(cx, cy, r, BLUE)
+    circle(cx, cy, r - 6, BLUE)
+    line(cx - r, cy, cx + r, cy, BLUE)
+    line(cx, cy - r, cx, cy + r, BLUE)
+    for _k in range(-2, 3):
+        _dx = _k * r // 3
+        _hh = int((r * r - _dx * _dx) ** 0.5)
+        line(cx + _dx, cy - _hh, cx + _dx, cy + _hh, BLUE)
 
 
-# -------------------------------------------------------------- PNG out
-def write_png(cv, path):
-    """Encode the canvas as an RGB PNG (filter 0 per row, zlib level 9)."""
-    raw = bytearray()
-    stride = cv.w * 3
-    for y in range(cv.h):
-        raw.append(0)
-        raw += cv.px[y * stride:(y + 1) * stride]
-    comp = zlib.compress(bytes(raw), 9)
+draw_globe(64, 62, 26)
+text("THE WORLD TODAY", (W - text_w("THE WORLD TODAY", 4)) // 2, 30, 4, INK)
+centre("TUESDAY, 24 NOVEMBER 2026", 66, 2, RED)
+centre("36 DATED STORIES  \u00b7  10 REGIONS  \u00b7  DRAWN SCENES  \u00b7  CLAIMS LABELLED  "
+       "\u00b7  REVISED EDITION V2", 90, 1, GRAY)
+hline(24, 106, 976, INK, 2)
+hline(24, 110, 976, INK, 1)
 
-    def chunk(tag, data):
-        out = struct.pack(">I", len(data)) + tag + data
-        out += struct.pack(">I", binascii.crc32(tag + data) & 0xFFFFFFFF)
-        return out
+# Markets ticker strip.
+centre("MARKETS 24 NOV: S&P 500 7,237.17 +4.73%  \u00b7  NASDAQ 24,089.56 +6.51%  "
+       "\u00b7  DOW +3.01%  \u00b7  NIKKEI +3.91%  \u00b7  BRENT $89  \u00b7  GOLD $3,636/OZ",
+       120, 1, BLUE)
+hline(24, 134, 976, LIGHT, 1)
 
-    ihdr = struct.pack(">IIBBBBB", cv.w, cv.h, 8, 2, 0, 0, 0)
-    png = b"\x89PNG\r\n\x1a\n"
-    png += chunk(b"IHDR", ihdr)
-    png += chunk(b"IDAT", comp)
-    png += chunk(b"IEND", b"")
-    with open(path, "wb") as f:
-        f.write(png)
-    return len(png)
+# ---------------------------------------------------------------- lead story
+LY, LH = 144, 148
+rect(24, LY, 976, LH, INK, 2)
+text("LEAD  \u2014  NORTH AMERICA  \u00b7  24 NOV 2026", 38, LY + 12, 1, RED)
+for _i, _ln in enumerate(wrap("HUANG IS BACK: NVIDIA +31.5% AS BOARD REINSTATES ITS CEO", 46)):
+    text(_ln, 38, LY + 32 + _i * 17, 2, INK)
+text("Nvidia shares add about $1tn in value after the board brings back", 38, LY + 72, 1, INK)
+text("Jensen Huang, 11 days after he stepped down. Trump says he pressed", 38, LY + 84, 1, INK)
+text("the board himself; the Nasdaq jumps 6.51% in the relief rally.", 38, LY + 96, 1, INK)
+text("NVDA +31.5%  \u00b7  ONE-DAY GAIN, 23 NOV 2026", 38, LY + 118, 1, GREEN)
 
+# Drawn scene 2: rising market chart in the lead box.
+CX0, CY0, CW, CHH = 700, LY + 18, 280, 104
+rect(CX0, CY0, CW, CHH, LIGHT, 1)
+line(CX0 + 8, CY0 + CHH - 12, CX0 + CW - 8, CY0 + CHH - 12, GRAY)
+line(CX0 + 8, CY0 + 8, CX0 + 8, CY0 + CHH - 12, GRAY)
+_pts = [(0, 78), (30, 74), (60, 80), (90, 66), (120, 70), (150, 52),
+        (180, 56), (210, 34), (240, 38), (264, 14)]
+for _a, _b in zip(_pts, _pts[1:]):
+    line(CX0 + 8 + _a[0], CY0 + 8 + _a[1], CX0 + 8 + _b[0], CY0 + 8 + _b[1], GREEN)
+    disc(CX0 + 8 + _a[0], CY0 + 8 + _a[1], 2, GREEN)
+disc(CX0 + 8 + _pts[-1][0], CY0 + 8 + _pts[-1][1], 3, RED)
+text("+31.5%", CX0 + 200, CY0 + 2, 1, RED)
 
-# ------------------------------------------------------------ scene art
-def lerp(a, b, t):
-    return tuple(round(a[i] + (b[i] - a[i]) * t) for i in range(3))
+# ---------------------------------------------------------------- region grid
+COLS_X = [24, 356, 688]
+COL_W = 312
+GRID_Y = 308
+GRID_BOTTOM = 972
 
-
-def draw_sky(cv, x0, y0, x1, y1):
-    """Vertical navy gradient with a fixed, seeded star field."""
-    for y in range(y0, y1):
-        t = (y - y0) / max(1, y1 - y0 - 1)
-        cv.fill_rect(x0, y, x1 - x0, 1, lerp(NAVY_DEEP, NAVY_MID, t))
-    # Deterministic stars: a tiny LCG, same dots on every run.
-    seed = 24112026
-    for _ in range(90):
-        seed = (1103515245 * seed + 12345) % (2 ** 31)
-        sx = x0 + 12 + seed % (x1 - x0 - 24)
-        seed = (1103515245 * seed + 12345) % (2 ** 31)
-        sy = y0 + 10 + seed % (y1 - y0 - 150)
-        seed = (1103515245 * seed + 12345) % (2 ** 31)
-        bright = seed % 3
-        col = WHITE if bright == 0 else (200, 212, 226)
-        cv.set(sx, sy, col)
-        if bright == 0:
-            cv.set(sx + 1, sy, col)
-
-
-def draw_awacs(cv, nose_x, cy):
-    """A NATO E-3 AWACS in leftward flight: fuselage, rotodome, wings."""
-    # Radar rings first, centred on the rotodome.
-    dx, dy = nose_x + 270, cy - 52
-    for r in (46, 84, 118):
-        cv.circle(dx, dy, r, SKY_LINE)
-    # Sweep spoke and blips on the rings.
-    cv.line(dx, dy, dx + 96, dy - 72, AMBER)
-    cv.circle(dx + 72, dy - 50, 4, AMBER, fill=True)
-    cv.circle(dx - 96, dy + 30, 4, WHITE, fill=True)
-    cv.circle(dx + 30, dy + 96, 4, WHITE, fill=True)
-    # Tail fin, then fuselage (nose left, tail right).
-    cv.polygon([(nose_x + 500, cy - 8), (nose_x + 516, cy - 62),
-                (nose_x + 548, cy - 62), (nose_x + 540, cy - 8)], PLANE_DARK)
-    cv.polygon([(nose_x, cy), (nose_x + 42, cy - 18), (nose_x + 380, cy - 18),
-                (nose_x + 520, cy - 8), (nose_x + 540, cy),
-                (nose_x + 520, cy + 8), (nose_x + 380, cy + 18),
-                (nose_x + 42, cy + 18)], PLANE)
-    cv.polyline([(nose_x, cy), (nose_x + 42, cy - 18), (nose_x + 380, cy - 18),
-                 (nose_x + 520, cy - 8), (nose_x + 540, cy),
-                 (nose_x + 520, cy + 8), (nose_x + 380, cy + 18),
-                 (nose_x + 42, cy + 18), (nose_x, cy)], PLANE_DARK)
-    # Swept main wing below the fuselage, with four engines.
-    cv.polygon([(nose_x + 210, cy + 14), (nose_x + 300, cy + 6),
-                (nose_x + 400, cy + 74), (nose_x + 356, cy + 82),
-                (nose_x + 268, cy + 40)], PLANE_DARK)
-    for ex in (268, 300, 332, 364):
-        cv.ellipse(nose_x + ex, cy + 46, 12, 7, PLANE, fill=True)
-        cv.ellipse(nose_x + ex, cy + 46, 12, 7, PLANE_DARK)
-    # Cockpit windows and a small NATO-style roundel near the tail.
-    for wx in range(6):
-        cv.fill_rect(nose_x + 52 + wx * 11, cy - 13, 7, 5, NAVY_DEEP)
-    cv.circle(nose_x + 470, cy - 2, 9, RED, fill=True)
-    cv.circle(nose_x + 470, cy - 2, 9, WHITE)
-    # Rotodome: two struts, then the big disc above the fuselage.
-    cv.line(nose_x + 232, cy - 16, nose_x + 244, cy - 40, PLANE_DARK)
-    cv.line(nose_x + 308, cy - 16, nose_x + 296, cy - 40, PLANE_DARK)
-    cv.ellipse(dx, dy, 104, 20, DOME, fill=True)
-    cv.ellipse(dx, dy, 104, 20, PLANE_DARK)
-    cv.ellipse(dx, dy - 4, 104, 16, (226, 232, 238), fill=True)
+# Distribute the 10 regions over 3 columns: 3 / 3 / 4 regions.
+COL_REGIONS = [
+    ["NORTH AMERICA", "LATIN AMERICA", "WESTERN EUROPE"],
+    ["EASTERN EUROPE", "MIDDLE EAST", "AFRICA"],
+    ["SOUTH ASIA", "EAST ASIA", "SOUTHEAST ASIA & OCEANIA", "GLOBAL"],
+]
 
 
-def draw_map(cv, y0, y1):
-    """Stylised eastern Europe: Baltic at top, Poland lit, impact dots."""
-    cv.fill_rect(0, y0, W, y1 - y0, SEA)
-    # Land mass along the bottom, with a lighter Poland in the centre.
-    cv.polygon([(0, y1), (0, y0 + 34), (240, y0 + 18), (430, y0 + 30),
-                (620, y0 + 22), (830, y0 + 30), (W, y0 + 16),
-                (W, y1)], LAND)
-    poland = [(560, y0 + 30), (640, y0 + 22), (730, y0 + 26),
-              (800, y0 + 40), (820, y0 + 62), (770, y0 + 82),
-              (680, y0 + 86), (600, y0 + 72), (556, y0 + 52)]
-    cv.polygon(poland, POLAND)
-    cv.polyline(poland + [poland[0]], (214, 232, 210))
-    # Dashed AWACS patrol path sweeping in from the west.
-    cv.dashed_line(60, y0 + 14, 700, y0 + 14, AMBER)
-    cv.draw_text(66, y0 - 4, "AWACS PATROL", 2, AMBER)
-    # Three missile impact sites in eastern Poland. Each label sits clear
-    # of its dot and of every other label, so nothing collides or clips.
-    for ix, iy in ((730, 478), (790, 492), (672, 512)):
-        cv.circle(ix, iy, 7, WHITE, fill=True)
-        cv.circle(ix, iy, 4, RED, fill=True)
-    cv.draw_text(716, 472, "NOWY LIPOWIEC", 2, WHITE, align="right")
-    cv.draw_text(802, 486, "RUDNIK", 2, WHITE)
-    cv.draw_text(684, 506, "MOLODYCZ", 2, WHITE)
-    # Place labels.
-    cv.draw_text(36, y0 + 44, "GERMANY", 2, (200, 214, 224))
-    cv.draw_text(868, y0 + 72, "UKRAINE", 2, (200, 214, 224))
-    cv.draw_text(330, y0 + 2, "BALTIC SEA", 1, (150, 180, 205))
+def draw_rocket(x, y, s):
+    # Drawn scene 3: Shenzhou-24 rocket, simple vector shape.
+    line(x + 10 * s, y, x + 10 * s, y + 22 * s, RED)
+    line(x + 18 * s, y, x + 18 * s, y + 22 * s, RED)
+    line(x + 10 * s, y, x + 14 * s, y - 8 * s, RED)
+    line(x + 18 * s, y, x + 14 * s, y - 8 * s, RED)
+    line(x + 10 * s, y + 22 * s, x + 6 * s, y + 30 * s, RED)
+    line(x + 18 * s, y + 22 * s, x + 22 * s, y + 30 * s, RED)
+    line(x + 14 * s, y + 22 * s, x + 11 * s, y + 32 * s, (230, 140, 40))
+    line(x + 14 * s, y + 22 * s, x + 14 * s, y + 34 * s, (230, 140, 40))
+    line(x + 14 * s, y + 22 * s, x + 17 * s, y + 32 * s, (230, 140, 40))
+    disc(x + 14 * s, y + 8 * s, 2 * s, BLUE)
+    for _sx, _sy in ((x, y - 6 * s), (x + 28 * s, y + 4 * s), (x + 2 * s, y + 26 * s)):
+        disc(_sx, _sy, 1, INK)
 
 
-def draw_globe(cv, cx, cy, r):
-    """Masthead globe: circle, meridians and parallels."""
-    cv.circle(cx, cy, r, WHITE)
-    cv.ellipse(cx, cy, r // 2, r, WHITE)
-    cv.ellipse(cx, cy, r, r // 3, WHITE)
-    cv.hline(cx - r, cx + r, cy, WHITE)
-    cv.line(cx - r, cy - r // 2, cx + r, cy - r // 2, WHITE)
+def draw_seismo(x, y, w):
+    # Drawn scene 4: seismograph zigzag for the Nepal quake.
+    _pts = [(0, 6), (w // 6, 6), (w // 6 + 6, -8), (w // 3, 14),
+            (w // 2, -10), (2 * w // 3, 10), (5 * w // 6, -4), (w, 6)]
+    for _a, _b in zip(_pts, _pts[1:]):
+        line(x + _a[0], y + _a[1], x + _b[0], y + _b[1], RED)
 
 
-def draw_crown_icon(cv, x, y, s):
-    """A crown: three spikes over a band (a title being defended)."""
-    cv.polygon([(x, y + 4 * s), (x, y + s), (x + 1.25 * s, y + 2.5 * s),
-                (x + 2.5 * s, y), (x + 3.75 * s, y + 2.5 * s),
-                (x + 5 * s, y + s), (x + 5 * s, y + 4 * s)], AMBER)
-    cv.fill_rect(x, y + 4 * s, 5 * s, s, NAVY)
+def draw_ball(x, y, r):
+    # Drawn scene 5: football for the Senegal AFCON story.
+    import math
+    circle(x, y, r, INK)
+    disc(x, y, 3, INK)
+    for _ang in range(5):
+        _a = math.radians(_ang * 72 - 90)
+        line(x, y, x + int(r * 0.9 * math.cos(_a)),
+             y + int(r * 0.9 * math.sin(_a)), INK)
 
 
-def draw_ship_icon(cv, x, y, s):
-    """A warship on waves: hull, superstructure, mast, waterline."""
-    cv.polygon([(x, y + 2 * s), (x + 5 * s, y + 2 * s), (x + 4 * s, y + 4 * s),
-                (x + s, y + 4 * s)], NAVY)
-    cv.fill_rect(x + 2 * s, y, s, 2 * s, NAVY)
-    cv.fill_rect(x + 3 * s, y - s, s // 2, s, NAVY)
-    cv.line(x, y + 5 * s, x + 5 * s, y + 5 * s, SKY_LINE)
-    cv.line(x + s, y + 6 * s, x + 4 * s, y + 6 * s, SKY_LINE)
+_col_ends = []
+for _ci, _regs in enumerate(COL_REGIONS):
+    _x = COLS_X[_ci]
+    _y = GRID_Y
+    for _reg in _regs:
+        _stories = [s for s in STORIES if s[0] == _reg]
+        _n = len(_stories)
+        text(_reg + "  \u2014  " + str(_n) + " STORIES", _x, _y, 1, BLUE)
+        hline(_x, _y + 10, COL_W, BLUE, 1)
+        _y += 18
+        for _r, _place, _head, _summ in _stories:
+            _hl = wrap(_place + ": " + _head, 52)
+            for _li, _ln in enumerate(_hl[:2]):
+                text(_ln, _x, _y + _li * 9, 1, INK)
+            _sy = _y + len(_hl[:2]) * 9 + 1
+            _sl = wrap(_summ, 52)[:2]
+            for _li, _ln in enumerate(_sl):
+                text(_ln, _x, _sy + _li * 9, 1, GRAY)
+            _y = _sy + len(_sl) * 9 + 2
+            if _place == "NEPAL":
+                draw_seismo(_x + 4, _y + 12, 60)
+                _y += 30
+            if _place == "SENEGAL":
+                draw_ball(_x + 288, _y + 9, 8)
+                _y += 20
+            if _place == "CHINA" and "TIANGONG" in _head:
+                draw_rocket(_x + 276, _y + 10, 1)
+                _y += 44
+        _y += 10
+    assert _y <= GRID_BOTTOM, "grid overflow in column %d" % _ci
+    _col_ends.append(_y)
+
+# ---------------------------------------------------------------- the day in numbers
+_BAND_Y = max(_col_ends) + 14
+if _BAND_Y + 56 < 984:
+    _bh = 984 - 12 - _BAND_Y
+    text("THE DAY IN NUMBERS  \u2014  24 NOVEMBER 2026", 24, _BAND_Y, 1, RED)
+    hline(24, _BAND_Y + 10, 976, RED, 1)
+    _stats = [("+31.5%", "NVIDIA"),
+              ("+6.51%", "NASDAQ"),
+              ("11", "INJURED IN RIYADH"),
+              ("24", "DEAD IN BANTEN FIRE"),
+              ("5.6", "NEPAL QUAKE"),
+              ("40,000", "TAIEX RECLAIMS")]
+    _bw = 976 // 6
+    _sy2 = _BAND_Y + 16 + max(0, (_bh - 44) // 2)
+    for _i, (_num, _lab) in enumerate(_stats):
+        _bx = 24 + _i * _bw
+        if _i:
+            vline(_bx - 8, _BAND_Y + 16, _bh - 20, LIGHT, 1)
+        text(_num, _bx, _sy2, 2, RED)
+        text(_lab, _bx + text_w(_num, 2) + 8, _sy2 + 3, 1, INK)
+
+# ---------------------------------------------------------------- footer
+hline(24, 984, 976, INK, 2)
+centre("DATE CHECK: ALL 36 STORIES DATED 24 NOVEMBER 2026", 992, 1, INK)
+centre("SOURCES: REUTERS  \u00b7  AP  \u00b7  BBC  \u00b7  UN NEWS  \u00b7  XINHUA  \u00b7  NATURE  "
+       "\u00b7  UNCONFIRMED CLAIMS LABELLED (CLAIM)", 1004, 1, GRAY)
+
+# ---------------------------------------------------------------- PNG encode
+def _chunk(kind, data):
+    _c = struct.pack(">I", len(data)) + kind + data
+    return _c + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
 
 
-def draw_flame_icon(cv, x, y, s):
-    """A flame: outer teardrop, inner tongue."""
-    cv.polygon([(x + 2 * s, y), (x + 4 * s, y + 2 * s), (x + 4 * s, y + 4 * s),
-                (x + 2 * s, y + 5 * s), (x, y + 4 * s), (x, y + 2 * s)], RED)
-    cv.polygon([(x + 2 * s, y + 2 * s), (x + 3 * s, y + 3 * s),
-                (x + 2 * s, y + 4 * s), (x + s, y + 3 * s)], AMBER)
-
-
-# ------------------------------------------------------------- the page
-def draw_page(cv):
-    # Top red rule and navy masthead.
-    cv.fill_rect(0, 0, W, 8, RED)
-    cv.fill_rect(0, 8, W, 120, NAVY)
-    draw_globe(cv, 76, 68, 34)
-    cv.draw_text(140, 34, "THE WORLD TODAY", 7, WHITE)
-    cv.fill_rect(140, 98, W - 140 - 40, 2, AMBER)
-    cv.draw_text(140, 106, "TUESDAY, 24 NOVEMBER 2026", 2, AMBER)
-    cv.draw_text(W - 40, 106, "ONE DAY • ONE PAGE", 2, WHITE, align="right")
-
-    # Dateline strip.
-    cv.draw_text(W // 2, 138,
-                 "WARSAW • BRUSSELS • KYIV • JAKARTA • WASHINGTON • SEOUL",
-                 2, GREY, align="center")
-
-    # Hero panel: night sky, AWACS over a stylised map of Poland.
-    draw_sky(cv, 0, 158, W, 540)
-    draw_awacs(cv, 170, 330)
-    draw_map(cv, 440, 540)
-
-    # Lead headline and deck.
-    cv.draw_text(W // 2, 556, "NATO'S EASTERN FLANK", 3, RED, align="center")
-    cv.draw_text(W // 2, 584, "NATO SENDS AWACS", 9, INK, align="center")
-    cv.draw_text(W // 2, 652, "TO POLAND", 9, INK, align="center")
-    cv.draw_text(W // 2, 728, "THREE RUSSIAN MISSILES CAME DOWN ON NATO SOIL.",
-                 2, GREY, align="center")
-    cv.draw_text(W // 2, 748, "THE ALLIANCE ANSWERS WITH ITS 'EYES IN THE SKY'.",
-                 2, GREY, align="center")
-    cv.fill_rect(44, 782, W - 88, 2, INK)
-
-    # Three secondary stories, each with a drawn icon.
-    cols = [
-        (44, draw_crown_icon, "CHESS TITLE DUEL",
-         "CHAMPION GUKESH FACES SINDAROV IN GENEVA FOR THE CROWN."),
-        (364, draw_ship_icon, "SUNK IN LIBYA",
-         "UKRAINE SINKS A RUSSIAN WARSHIP IN A LIBYAN PORT."),
-        (684, draw_flame_icon, "24 DEAD IN FIRE",
-         "BLAZE AT A CANDY FACTORY IN INDONESIA; 30 STILL MISSING."),
-    ]
-    for x, icon, head, deck in cols:
-        icon(cv, x, 804, 8)
-        cv.draw_text(x, 844, head, 3, INK)
-        lines = wrap_text(deck, 24)
-        cv.draw_text_block(x, 876, lines, 2, GREY, leading=4)
-    cv.vline(348, 800, 932, (200, 192, 170))
-    cv.vline(668, 800, 932, (200, 192, 170))
-
-    # Ticker band with the rest of the day, set large enough to stay
-    # legible when the judge reads the page downscaled, with air between
-    # the two lines and the footer.
-    cv.fill_rect(0, 936, W, 56, NAVY)
-    cv.draw_text(W // 2, 941, "COP31 COLLAPSES  •  SEOUL JET ALERT  •  CHAPO HELD",
-                 3, WHITE, align="center")
-    cv.draw_text(W // 2, 967, "GAZA STRIKES KILL 3  •  ALCARAZ WINS ATP FINALS",
-                 3, WHITE, align="center")
-
-    # Footer naming the day.
-    cv.draw_text(W // 2, 998, "THE WORLD IN ONE IMAGE — TUESDAY 24 NOVEMBER 2026",
-                 2, GREY, align="center")
-
-
-def main():
-    outdir = os.environ.get("MAKEFUN_OUTPUT_DIR", "/output")
-    os.makedirs(outdir, exist_ok=True)
-    cv = Canvas(W, H, PAPER)
-    draw_page(cv)
-    path = os.path.join(outdir, "entry.png")
-    size = write_png(cv, path)
-    print(f"wrote {path} ({size} bytes, {W}x{H})")
+def save_png(path):
+    _raw = bytearray()
+    for _y in range(H):
+        _raw.append(0)
+        _raw += buf[_y * W * 3:(_y + 1) * W * 3]
+    _png = (b"\x89PNG\r\n\x1a\n"
+            + _chunk(b"IHDR", struct.pack(">IIBBBBB", W, H, 8, 2, 0, 0, 0))
+            + _chunk(b"IDAT", zlib.compress(bytes(_raw), 6))
+            + _chunk(b"IEND", b""))
+    with open(path, "wb") as _f:
+        _f.write(_png)
+    return len(_png)
 
 
 if __name__ == "__main__":
-    main()
+    _n = save_png(OUT)
+    _cwd = os.path.join(os.getcwd(), "entry.png")
+    if os.path.abspath(_cwd) != os.path.abspath(OUT):
+        save_png(_cwd)
+    print("wrote %s (%d bytes, %d stories, %d regions)"
+          % (OUT, _n, len(STORIES), len(REGIONS)))
